@@ -29,10 +29,9 @@ Forms for Elastic IP operations
 
 """
 import wtforms
-from wtforms import validators, widgets
+from wtforms import validators
 
-from pyramid.i18n import TranslationString as _
-
+from ..i18n import _
 from . import BaseSecureForm, ChoicesManager
 
 
@@ -46,6 +45,7 @@ class AllocateIPsForm(BaseSecureForm):
 
     def __init__(self, request, **kwargs):
         super(AllocateIPsForm, self).__init__(request, **kwargs)
+        self.ipcount.data = 1
         self.ipcount.error_msg = self.ipcount_error_msg
 
 

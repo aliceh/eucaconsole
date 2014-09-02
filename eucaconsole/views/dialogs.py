@@ -31,6 +31,8 @@ See http://docs.pylonsproject.org/projects/pyramid_layout/en/latest/layouts.html
 """
 from pyramid_layout.panel import panel_config
 
+from ..views import BaseView
+
 
 @panel_config('ipaddress_dialogs', renderer='../templates/dialogs/ipaddress_dialogs.pt')
 def ipaddress_dialogs(context, request, eip=None, landingpage=False,
@@ -121,17 +123,17 @@ def securitygroup_dialogs(context, request, security_group=None, landingpage=Fal
     """Modal dialogs for Security group landing and detail page."""
     return dict(
         security_group=security_group,
+        security_group_name=BaseView.escape_braces(security_group.name) if security_group else '',
         landingpage=landingpage,
         delete_form=delete_form,
     )
 
 
 @panel_config('create_securitygroup_dialog', renderer='../templates/dialogs/create_securitygroup_dialog.pt')
-def create_securitygroup_dialog(context, request, securitygroup_form=None, security_group_names=None):
+def create_securitygroup_dialog(context, request, securitygroup_form=None):
     """ Modal dialog for creating a security group."""
     return dict(
         securitygroup_form=securitygroup_form,
-        security_group_names=security_group_names,
     )
 
 
@@ -153,6 +155,7 @@ def keypair_dialogs(context, request, keypair=None, landingpage=False, delete_fo
     """ Modal dialogs for Keypair landing and detail page."""
     return dict(
         keypair=keypair,
+        keypair_name=BaseView.escape_braces(keypair.name) if keypair else '',
         landingpage=landingpage,
         delete_form=delete_form,
     )
@@ -172,6 +175,7 @@ def launchconfig_dialogs(context, request, launch_config=None, in_use=False, lan
     """ Modal dialogs for Launch configurations landing and detail page."""
     return dict(
         launch_config=launch_config,
+        launch_config_name=BaseView.escape_braces(launch_config.name) if launch_config else '',
         in_use=in_use,
         landingpage=landingpage,
         delete_form=delete_form,
@@ -183,6 +187,17 @@ def scalinggroup_dialogs(context, request, scaling_group=None, landingpage=False
     """Modal dialogs for Scaling group landing and detail page."""
     return dict(
         scaling_group=scaling_group,
+        scaling_group_name=BaseView.escape_braces(scaling_group.name) if scaling_group else '',
+        landingpage=landingpage,
+        delete_form=delete_form,
+    )
+
+
+@panel_config('account_dialogs', renderer='../templates/dialogs/account_dialogs.pt')
+def account_dialogs(context, request, account=None, landingpage=False, delete_form=None):
+    """ Modal dialogs for Account landing and detail page."""
+    return dict(
+        account=account,
         landingpage=landingpage,
         delete_form=delete_form,
     )
@@ -197,3 +212,24 @@ def group_dialogs(context, request, group=None, landingpage=False, delete_form=N
         delete_form=delete_form,
     )
 
+
+@panel_config('role_dialogs', renderer='../templates/dialogs/role_dialogs.pt')
+def role_dialogs(context, request, role=None, landingpage=False, delete_form=None):
+    """ Modal dialogs for Role landing and detail page."""
+    return dict(
+        role=role,
+        landingpage=landingpage,
+        delete_form=delete_form,
+    )
+
+@panel_config('image_dialogs', renderer='../templates/dialogs/image_dialogs.pt')
+def image_dialogs(context, request, image=None, image_name_id='', landingpage=False,
+                  deregister_form=None, snapshot_images_registered=0):
+    """ Modal dialogs for Image landing and detail page."""
+    return dict(
+        image=image,
+        image_name_id=image_name_id,
+        landingpage=landingpage,
+        deregister_form=deregister_form,
+        snapshot_images_registered=snapshot_images_registered,
+    )

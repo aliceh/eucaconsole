@@ -33,11 +33,14 @@ import logging
 import urllib2
 import xml
 
-from beaker.cache import cache_region
 from boto import ec2
+from boto import vpc
 from boto.ec2.connection import EC2Connection
+from boto.s3.connection import S3Connection
+from boto.s3.connection import OrdinaryCallingFormat
 # uncomment to enable boto request logger. Use only for development (see ref in _euca_connection)
 #from boto.requestlog import RequestLogger
+import boto
 import boto.ec2.autoscale
 import boto.ec2.cloudwatch
 import boto.ec2.elb
@@ -49,9 +52,7 @@ from pyramid.security import Authenticated, authenticated_userid
 
 
 class User(object):
-    """Authenticated/Anonymous User object for Pyramid Auth.
-       Note: This is not an IAM User object (maybe not yet anyway)
-    """
+    """Authenticated/Anonymous User object for Pyramid Auth."""
     def __init__(self, user_id=None):
         self.user_id = user_id
 
@@ -67,6 +68,19 @@ class User(object):
         """user_id will be None if the user isn't authenticated"""
         return self.user_id
 
+    @staticmethod
+    def get_account_id(ec2_conn=None, request=None):
+        """Get 12-digit account ID for the currently signed-in user's account using the default security group"""
+        from ..views import boto_error_handler
+        account_id = ""
+        if ec2_conn and request:
+            with boto_error_handler(request):
+                security_groups = ec2_conn.get_all_security_groups(filters={'group-name': 'default'})
+                security_group = security_groups[0] if security_groups else None 
+                if security_group is not None:
+                    account_id = security_group.owner_id
+        return account_id
+                    
 
 class ConnectionManager(object):
     """Returns connection objects, pulling from Beaker cache when available"""
@@ -85,12 +99,11 @@ class ConnectionManager(object):
         :param secret_key: AWS secret key
 
         :type conn_type: string
-        :param conn_type: Connection type ('ec2', 'autoscale', 'cloudwatch', or 'elb')
+        :param conn_type: Connection type ('ec2', 'autoscale', 'cloudwatch', 'elb', or 's3')
 
         """
         cache_key = 'aws_connection_cache_{conn_type}_{region}'.format(conn_type=conn_type, region=region)
 
-        # @cache_region('short_term', cache_key)
         def _aws_connection(_region, _access_key, _secret_key, _token, _conn_type):
             conn = None
             if conn_type == 'ec2':
@@ -102,8 +115,14 @@ class ConnectionManager(object):
             elif conn_type == 'cloudwatch':
                 conn = ec2.cloudwatch.connect_to_region(
                     _region, aws_access_key_id=_access_key, aws_secret_access_key=_secret_key, security_token=_token)
+            elif conn_type == 's3':
+                conn = boto.connect_s3(  # Don't specify region when connecting to S3
+                    aws_access_key_id=_access_key, aws_secret_access_key=_secret_key, security_token=_token)
             if conn_type == 'elb':
                 conn = ec2.elb.connect_to_region(
+                    _region, aws_access_key_id=_access_key, aws_secret_access_key=_secret_key, security_token=_token)
+            if conn_type == 'vpc':
+                conn = vpc.connect_to_region(
                     _region, aws_access_key_id=_access_key, aws_secret_access_key=_secret_key, security_token=_token)
             return conn
 
@@ -127,14 +146,13 @@ class ConnectionManager(object):
         :param secret_key: Eucalyptus secret key
 
         :type conn_type: string
-        :param conn_type: Connection type ('ec2', 'autoscale', 'cloudwatch', or 'elb')
+        :param conn_type: Connection type ('ec2', 'autoscale', 'cloudwatch', 'elb', 'iam', 'sts', or 's3')
 
         """
         cache_key = 'euca_connection_cache_{conn_type}_{clchost}_{port}'.format(
             conn_type=conn_type, clchost=clchost, port=port
         )
 
-        # @cache_region('short_term', cache_key)
         def _euca_connection(_clchost, _port, _access_id, _secret_key, _token, _conn_type):
             region = RegionInfo(name='eucalyptus', endpoint=_clchost)
             path = '/services/Eucalyptus'
@@ -155,17 +173,26 @@ class ConnectionManager(object):
             elif conn_type == 'iam':
                 path = '/services/Euare'
                 conn_class = boto.iam.IAMConnection
+            elif conn_type == 's3':
+                path = '/services/Walrus'
+                conn_class = S3Connection
+            elif conn_type == 'vpc':
+                conn_class = boto.vpc.VPCConnection
 
             if conn_type == 'sts':
                 conn = EucaAuthenticator(_clchost, _port)
-            elif conn_type != 'iam':
-                conn = conn_class(
-                    _access_id, _secret_key, region=region, port=_port, path=path, is_secure=True, security_token=_token
-                )
-            else:
+
+            # IAM and S3 connections need host instead of region info
+            elif conn_type in ['iam', 's3']:
                 conn = conn_class(
                     _access_id, _secret_key, host=_clchost, port=_port, path=path, is_secure=True, security_token=_token
                 )
+            else:
+                conn = conn_class(
+                    _access_id, _secret_key, region=region, port=_port, path=path, is_secure=True, security_token=_token
+                )
+            if conn_type == 's3':
+                conn.calling_format=OrdinaryCallingFormat()
 
             # AutoScaling service needs additional auth info
             if conn_type == 'autoscale':
