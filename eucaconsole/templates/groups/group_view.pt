@@ -51,7 +51,7 @@
                         ${structure:group_form['csrf_token']}
                         <div class="section columns">
                             <div class="row">
-                                <p><span i18n:translate="">Add group to account:</span>&nbsp;${layout.account}</p>
+                                <p><span class="subsection-label" i18n:translate="">Add group to account:</span>&nbsp;${layout.account}</p>
                             </div>
                             ${panel('form_field', field=group_form.group_name, leftcol_width=1, rightcol_width=11, autofocus='', ng_attrs={'model': 'groupName'}, **html_attrs)}
                         </div>
@@ -108,7 +108,7 @@
                             </div>
                             <div class="row controls-wrapper readonly">
                                 <div class="small-3 columns"><label class="right" i18n:translate="">ARN</label></div>
-                                <div class="small-9 columns value inline breakword">${group_arn if group_arn else ''}</div>
+                                <div class="small-9 columns value inline breakword" ng-non-bindable="">${group_arn if group_arn else ''}</div>
                             </div>
                             <div class="top-bottom-padding">
                                 ${panel('form_field', field=group_update_form['path'], leftcol_width=3, rightcol_width=9)}
