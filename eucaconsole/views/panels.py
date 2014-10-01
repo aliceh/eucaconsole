@@ -36,7 +36,7 @@ import simplejson as json
 
 from boto.s3.bucket import Bucket
 
-from wtforms.fields import IntegerField
+from wtforms.fields import IntegerField, BooleanField
 from wtforms.validators import Length
 from pyramid_layout.panel import panel_config
 
@@ -51,6 +51,8 @@ def get_object_type(bucket_object):
     Detect object type
     :return: object type (one of 'bucket', 'folder', 'object')
     """
+    if bucket_object is None:
+        return ''
     object_type = 'bucket' if isinstance(bucket_object, Bucket) else 'object'
     if object_type == 'object' and bucket_object.size == 0 and DELIMITER in bucket_object.name:
         object_type = 'folder'
@@ -75,15 +77,15 @@ def landingpage_filters(context, request, filters_form=None):
 
 @panel_config('form_field', renderer='../templates/panels/form_field_row.pt')
 def form_field_row(context, request, field=None, reverse=False, leftcol_width=4, rightcol_width=8,
-                   inline='', ng_attrs=None, **kwargs):
+                   inline=True, ng_attrs=None, **kwargs):
     """ Widget for a singe form field row.
         The left/right column widths are Zurb Foundation grid units.
             e.g. leftcol_width=3 would set column for labels with a wrapper of <div class="small-3 columns">...</div>
         Pass any HTML attributes to this widget as keyword arguments.
-            e.g. ${panel('form_field', field=the_field, readonly='readonly')}
+            e.g. ${panel('form_field', field=the_field)}
     """
     html_attrs = {}
-    error_msg = kwargs.get('error_msg') or getattr(field, 'error_msg', None) 
+    error_msg = kwargs.get('error_msg') or getattr(field, 'error_msg', None)
 
     # Add required="required" HTML attribute to form field if any "required" validators
     if field.flags.required:
@@ -102,6 +104,10 @@ def form_field_row(context, request, field=None, reverse=False, leftcol_width=4,
         html_attrs['type'] = 'number'  # Use input type="number" for IntegerField inputs
         html_attrs['min'] = kwargs.get('min', 0)
 
+    checkbox = False
+    if isinstance(field, BooleanField):
+        checkbox = True
+
     # Add any passed kwargs to field's HTML attributes
     for key, value in kwargs.items():
         html_attrs[key] = value
@@ -115,7 +121,7 @@ def form_field_row(context, request, field=None, reverse=False, leftcol_width=4,
             html_attrs['ng-{0}'.format(ngkey)] = ngvalue
 
     return dict(
-        field=field, error_msg=error_msg, html_attrs=html_attrs, inline=inline, 
+        field=field, error_msg=error_msg, html_attrs=html_attrs, inline=inline, checkbox=checkbox,
         leftcol_width=leftcol_width, rightcol_width=rightcol_width, reverse=reverse
     )
 
@@ -329,7 +335,7 @@ def securitygroup_rules_egress_landingpage(context, request, tile_view=False):
 
 
 @panel_config('s3_sharing_panel', renderer='../templates/panels/s3_sharing_panel.pt')
-def s3_sharing_panel(context, request, bucket_object=None, sharing_form=None):
+def s3_sharing_panel(context, request, bucket_object=None, sharing_form=None, show_caution=False):
     grants_list = []
     if bucket_object is not None:
         for grant in bucket_object.get_acl().acl.grants:
@@ -344,6 +350,7 @@ def s3_sharing_panel(context, request, bucket_object=None, sharing_form=None):
         bucket_object=bucket_object,
         object_type=get_object_type(bucket_object),
         sharing_form=sharing_form,
+        show_caution=show_caution,
         grants_json=json.dumps(grants_list),
     )
 

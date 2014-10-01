@@ -29,16 +29,11 @@ Pyramid views for Eucalyptus and AWS instances
 
 """
 import base64
-from datetime import datetime, timedelta
 from operator import attrgetter
-import hashlib
-import hmac
 import os
 import simplejson as json
-import time
 from M2Crypto import RSA
-import pylibmc
-import logging
+import re
 
 from boto.exception import BotoServerError
 from boto.s3.key import Key
@@ -52,7 +47,8 @@ from ..forms.images import ImagesFiltersForm
 from ..forms.instances import (
     InstanceForm, AttachVolumeForm, DetachVolumeForm, LaunchInstanceForm, LaunchMoreInstancesForm,
     RebootInstanceForm, StartInstanceForm, StopInstanceForm, TerminateInstanceForm, InstanceCreateImageForm,
-    BatchTerminateInstancesForm, InstancesFiltersForm, AssociateIpToInstanceForm, DisassociateIpFromInstanceForm)
+    BatchTerminateInstancesForm, InstancesFiltersForm, InstanceTypeForm,
+    AssociateIpToInstanceForm, DisassociateIpFromInstanceForm)
 from ..forms import GenerateFileForm
 from ..forms.keypairs import KeyPairForm
 from ..forms.securitygroups import SecurityGroupForm
@@ -112,6 +108,14 @@ class BaseInstanceView(BaseView):
             except BotoServerError as err:
                 pass
         return None
+
+    def get_vpc_subnet_display(self, subnet_id):
+        if self.vpc_conn and subnet_id:
+            with boto_error_handler(self.request):
+                vpc_subnet = self.vpc_conn.get_all_subnets(subnet_ids=[subnet_id])
+                if vpc_subnet:
+                    return "{0} ({1})".format(vpc_subnet[0].cidr_block, subnet_id) 
+        return ''
 
 
 class InstancesView(LandingPageView, BaseInstanceView):
@@ -349,26 +353,17 @@ class InstancesJsonView(LandingPageView):
             owner_alias = 'amazon'
         owners = [owner_alias] if owner_alias else []
         region = self.request.session.get('region')
-        images = self.get_images(self.conn, [], [], region)
         for instance in filtered_items:
             is_transitional = instance.state in transitional_states
             security_groups_array = sorted({'name': group.name, 'id': group.id} for group in instance.groups)
             if instance.platform is None:
                 instance.platform = _(u"linux")
             has_elastic_ip = instance.ip_address in elastic_ips
-            image = self.get_image_by_id(images, instance.image_id)
-            image_name = None
-            if image:
-                image_name = '{0}{1}'.format(
-                    image.name if image.name else image.id,
-                    ' ({0})'.format(image.id) if image.name else ''
-                )
             instances.append(dict(
                 id=instance.id,
                 name=TaggedItemView.get_display_name(instance, escapebraces=False),
                 instance_type=instance.instance_type,
                 image_id=instance.image_id,
-                image_name=image_name,
                 ip_address=instance.ip_address,
                 has_elastic_ip=has_elastic_ip,
                 public_dns_name=instance.public_dns_name,
@@ -384,6 +379,17 @@ class InstancesJsonView(LandingPageView):
                 transitional=is_transitional,
                 running_create=True if instance.tags.get('ec_bundling') else False,
             ))
+        image_ids = [i['image_id'] for i in instances]
+        images = self.conn.get_all_images(filters={'image-id':image_ids})
+        for instance in instances:
+            image = self.get_image_by_id(images, instance['image_id'])
+            image_name = None
+            if image:
+                image_name = '{0}{1}'.format(
+                    image.name if image.name else image.id,
+                    ' ({0})'.format(image.id) if image.name else ''
+                )
+            instance['image_name']=image_name
         return dict(results=instances)
 
     def get_items(self, filters=None):
@@ -507,8 +513,10 @@ class InstanceView(TaggedItemView, BaseInstanceView):
             associate_ip_form=self.associate_ip_form,
             disassociate_ip_form=self.disassociate_ip_form,
             has_elastic_ip=self.has_elastic_ip,
+            vpc_subnet_display=self.get_vpc_subnet_display(self.instance.subnet_id) if self.instance else None,
             role=self.role,
             running_create=self.running_create,
+            controller_options_json=self.get_controller_options_json(),
         )
 
     @view_config(route_name='instance_view', renderer=VIEW_TEMPLATE, request_method='GET')
@@ -688,6 +696,22 @@ class InstanceView(TaggedItemView, BaseInstanceView):
                 if ip_address == ip.public_ip:
                     has_elastic_ip = True
         return has_elastic_ip
+
+    def get_controller_options_json(self):
+        if not self.instance:
+            return ''
+        return BaseView.escape_json(json.dumps({
+            'instance_state_json_url': self.request.route_path('instance_state_json', id=self.instance.id),
+            'instance_userdata_json_url': self.request.route_path('instance_userdata_json', id=self.instance.id),
+            'instance_ip_address_json_url': self.request.route_path('instance_ip_address_json', id=self.instance.id),
+            'instance_console_json_url': self.request.route_path('instance_console_output_json', id=self.instance.id),
+            'instance_state': self.instance.state,
+            'instance_id': self.instance.id,
+            'instance_ip_address': self.instance.ip_address,
+            'instance_public_dns': self.instance.public_dns_name,
+            'instance_platform': self.instance.platform,
+            'has_elastic_ip': self.has_elastic_ip,
+        }))
 
 
 class InstanceStateView(BaseInstanceView):
@@ -900,6 +924,7 @@ class InstanceLaunchView(BlockDeviceMappingItemView):
             securitygroup_choices_json=self.securitygroup_choices_json,
             vpc_subnet_choices_json=self.vpc_subnet_choices_json,
             role_choices_json=self.role_choices_json,
+            security_group_placeholder_text=_(u'Select...'),
         )
 
     @view_config(route_name='instance_create', renderer=TEMPLATE, request_method='GET')
@@ -919,13 +944,10 @@ class InstanceLaunchView(BlockDeviceMappingItemView):
                 key_name = None  # Handle "None (advanced)" option
             if key_name:
                 key_name = self.unescape_braces(key_name)
-            securitygroup = self.request.params.get('securitygroup', 'default')
-            if securitygroup:
-                securitygroup = self.unescape_braces(securitygroup)
+            securitygroup_ids = self.request.params.getall('securitygroup')
             instance_type = self.request.params.get('instance_type', 'm1.small')
             availability_zone = self.request.params.get('zone') or None
             vpc_network = self.request.params.get('vpc_network') or None
-            securitygroup_ids = [securitygroup]
             vpc_subnet = self.request.params.get('vpc_subnet') or None
             associate_public_ip_address = self.request.params.get('associate_public_ip_address')
             if associate_public_ip_address == 'true':
@@ -1012,7 +1034,11 @@ class InstanceLaunchView(BlockDeviceMappingItemView):
     def get_securitygroups_rules(self):
         rules_dict = {}
         for security_group in self.securitygroups:
-            rules_dict[security_group.id] = SecurityGroupsView.get_rules(security_group.rules)
+            rules = SecurityGroupsView.get_rules(security_group.rules)
+            if security_group.vpc_id is not None:
+                rules_egress = SecurityGroupsView.get_rules(security_group.rules_egress, rule_type='outbound')
+                rules = rules + rules_egress 
+            rules_dict[security_group.id] = rules
         return rules_dict
 
     def get_securitygroup_id(self, name, vpc_network=None):
@@ -1069,6 +1095,7 @@ class InstanceLaunchMoreView(BaseInstanceView, BlockDeviceMappingItemView):
             associate_public_ip_address=self.associate_public_ip_address,
             launch_more_form=self.launch_more_form,
             snapshot_choices=self.get_snapshot_choices(),
+            vpc_subnet_display=self.get_vpc_subnet_display(self.instance.subnet_id) if self.instance else None,
             role=self.role,
         )
 
@@ -1223,7 +1250,7 @@ class InstanceCreateImageView(BaseInstanceView, BlockDeviceMappingItemView):
                 if s3_bucket:
                     s3_bucket = self.unescape_braces(s3_bucket)
                 s3_prefix = self.request.params.get('s3_prefix', '')
-                upload_policy = InstanceCreateImageView.generate_default_policy(s3_bucket, s3_prefix)
+                upload_policy = BaseView.generate_default_policy(s3_bucket, s3_prefix)
                 secret = self.request.session['secret_key']
                 with boto_error_handler(self.request, self.location):
                     self.log_request(_(u"Bundling instance {0}").format(instance_id))
@@ -1233,12 +1260,15 @@ class InstanceCreateImageView(BaseInstanceView, BlockDeviceMappingItemView):
                     access_key = creds.access_key.access_key_id
                     secret_key = creds.access_key.secret_access_key
                     # we need to make the call ourselves to override boto's auto-signing
-                    params = {'InstanceId': instance_id,
-                              'Storage.S3.Bucket': s3_bucket,
-                              'Storage.S3.Prefix': s3_prefix,
-                              'Storage.S3.UploadPolicy': upload_policy}
-                    params['Storage.S3.AWSAccessKeyId'] = access_key
-                    params['Storage.S3.UploadPolicySignature'] = InstanceCreateImageView.gen_policy_signature(upload_policy, secret_key)
+                    params = {
+                        'InstanceId': instance_id,
+                        'Storage.S3.Bucket': s3_bucket,
+                        'Storage.S3.Prefix': s3_prefix,
+                        'Storage.S3.UploadPolicy': upload_policy,
+                        'Storage.S3.AWSAccessKeyId': access_key,
+                        'Storage.S3.UploadPolicySignature': BaseView.gen_policy_signature(
+                            upload_policy, secret_key)
+                    }
                     result = self.conn.get_object('BundleInstance', params, BundleInstanceTask, verb='POST')
                     bundle_metadata = {
                         'version': curr_version,
@@ -1282,25 +1312,72 @@ class InstanceCreateImageView(BaseInstanceView, BlockDeviceMappingItemView):
             self.request.error_messages = self.create_image_form.get_errors_list()
         return self.render_dict
 
-    # these methods copied from euca2ools:bundleinstance.py and used with small changes
-    @staticmethod
-    def generate_default_policy(bucket, prefix):
-        delta = timedelta(hours=24)
-        expire_time = (datetime.utcnow() + delta).replace(microsecond=0)
 
-        conditions = [{'acl': 'ec2-bundle-read'},
-                      {'bucket': bucket},
-                      ['starts-with', '$key', prefix]]
-        policy = {'conditions': conditions,
-                  'expiration': time.strftime('%Y-%m-%dT%H:%M:%SZ',
-                                              expire_time.timetuple())}
-        policy_json = json.dumps(policy)
-        return base64.b64encode(policy_json)
+class InstanceTypesView(LandingPageView, BaseInstanceView):
 
-    @staticmethod
-    def gen_policy_signature(policy, secret_key):
-        # hmac cannot handle unicode
-        secret_key = secret_key.encode('ascii', 'ignore')
-        my_hmac = hmac.new(secret_key, digestmod=hashlib.sha1)
-        my_hmac.update(policy)
-        return base64.b64encode(my_hmac.digest())
+    def __init__(self, request):
+        super(InstanceTypesView, self).__init__(request)
+        self.request = request
+        self.conn = self.get_connection()
+        self.render_dict = dict(
+            instance_type_form=InstanceTypeForm(self.request),
+            filter_fields=True,
+            sort_keys=[],
+            filter_keys=[],
+            prefix='',
+        )
+
+    @view_config(route_name='instance_types', renderer='../templates/instances/instance_types.pt')
+    def instance_types_landing(self):
+        return self.render_dict
+
+    @view_config(route_name='instance_types_json', renderer='json', request_method='POST')
+    def instance_types_json(self):
+        if not(self.request.session['account_access']):
+            return JSONResponse(status=401, message=_(u"Unauthorized"))
+        if not(self.is_csrf_valid()):
+            return JSONResponse(status=400, message="missing CSRF token")
+        instance_types_results = []
+        with boto_error_handler(self.request):
+            instance_types = self.conn.get_all_instance_types()
+            for instance_type in instance_types:
+                instance_types_results.append(dict(
+                    name=instance_type.name,
+                    cpu=instance_type.cores,
+                    memory=instance_type.memory,
+                    disk=instance_type.disk,
+                ))
+        return dict(results=instance_types_results)
+
+    @view_config(route_name='instance_types_update', renderer='json', request_method='POST')
+    def instance_types_update(self):
+        if not(self.is_csrf_valid()):
+            return JSONResponse(status=400, message="missing CSRF token")
+        # Extract the list of instance type updates
+        update = {} 
+        for param in self.request.params.items():
+            match = re.search('update\[(\d+)\]\[(\w+)\]', param[0])
+            if match:
+                index = match.group(1)
+                attr = match.group(2)
+                value = param[1]
+                instance_type = {} 
+                if index in update: 
+                    instance_type = update[index]
+                instance_type[attr] = value 
+                update[index] = instance_type
+        # Modify instance type 
+        for item in update.itervalues():
+            is_updated = self.modify_instance_type_attribute(
+                item['name'], item['cpu'], item['memory'], item['disk'])
+            if not is_updated:
+                return JSONResponse(status=400, message=_(u"Failed to instance type attributes"))
+        return dict(message=_(u"Successfully updated instance type attributes"))
+
+    def modify_instance_type_attribute(self, name, cpu, memory, disk):
+        # Ensure that the attributes are positive integers
+        if cpu <= 0 or memory <= 0 or disk <= 0:
+            return False
+        params = {'Name': name, 'Cpu': cpu, 'Memory': memory, 'Disk': disk} 
+        with boto_error_handler(self.request):
+            return self.conn.get_status('ModifyInstanceTypeAttribute', params, verb='POST')

@@ -50,6 +50,11 @@ angular.module('SecurityGroupRules', [])
             $scope.syncRules();
             $scope.setWatchers();
         };
+        $scope.clearRules = function () {
+            $scope.rulesArray = [];
+            $scope.rulesEgressArray = [];
+            $scope.syncRules();
+        };
         $scope.getAllSecurityGroups = function (vpc) {
             var csrf_token = $('#csrf_token').val();
             var data = "csrf_token=" + csrf_token + "&vpc_id=" + vpc;
@@ -132,10 +137,14 @@ angular.module('SecurityGroupRules', [])
                     return;
                 }
                 $scope.securityGroupVPC = vpc;
-                $scope.resetValues();
-                // If VPC is selected while in 'create new security group' mode, add the default outbound rule
-                if ($scope.securityGroupVPC != '' && $('select#vpc_network').length > 0) {
-                    $scope.addDefaultOutboundRule();
+                // In 'Create new security group' mode,
+                if ($('select#vpc_network').length > 0) {
+                    // Clear previously selected rules when VPC is changed
+                    $scope.clearRules();
+                    // Add the default outbound rule for VPC security group
+                    if ($scope.securityGroupVPC != '') {
+                        $scope.addDefaultOutboundRule();
+                    } 
                 }
                 // When NoVPC is selected, which the tab to 'inbound'
                 if ($scope.securityGroupVPC == '') {
@@ -155,6 +164,7 @@ angular.module('SecurityGroupRules', [])
             $(document).on('closed', '#create-securitygroup-modal', function () {
                 $scope.$apply(function(){
                     $scope.rulesArray = [];  // Empty out the rules when the dialog is closed 
+                    $scope.rulesEgressArray = [];  // Empty out the rules when the dialog is closed 
                     $scope.syncRules();
                 });
             });
@@ -264,6 +274,7 @@ angular.module('SecurityGroupRules', [])
                     'name': name,
                     'owner_id': owner_id
                 }],
+                'rule_type': $scope.ruleType,
                 'fresh': 'new'
             }; 
         };
@@ -364,15 +375,14 @@ angular.module('SecurityGroupRules', [])
             }
             $scope.ruleType = storeRuleType;   // Restore the ruleType value
         };
-        $scope.selectRuleType = function (type) {
-            $scope.ruleType = type;
+        $scope.selectRuleType = function (ruleType) {
+            $scope.ruleType = ruleType;
             if ($scope.ruleType === 'inbound') {
                 $scope.inboundButtonClass = 'active';
                 $scope.outboundButtonClass = 'inactive';
             } else {
                 $scope.inboundButtonClass = 'inactive';
                 $scope.outboundButtonClass = 'active';
-
             }
         };
     })

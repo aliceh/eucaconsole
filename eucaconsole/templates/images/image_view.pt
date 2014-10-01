@@ -6,11 +6,7 @@
 
 <div metal:fill-slot="main_content">
     <div class="row" id="contentwrap" 
-         ng-app="ImagePage" ng-controller="ImagePageCtrl" ng-init="initController('${is_public}',
-                    ${image_launch_permissions},
-                    '${request.route_path('image_state_json', id=image_id)}',
-                    '${request.route_path('image_cancel', id=image_id)}',
-                    '${request.route_path('images')}')">
+         ng-app="ImagePage" ng-controller="ImagePageCtrl" ng-init="initController('${controller_options_json}')">
         <metal:breadcrumbs metal:use-macro="layout.global_macros['breadcrumbs']">
             <metal:crumbs metal:fill-slot="crumbs">
                 <li><a href="${request.route_path('images')}" i18n:translate="">Images</a></li>
@@ -65,7 +61,7 @@
                                     <label i18n:translate="" tal:condition="layout.cloud_type == 'euca'">EMI name</label>
                                     <label i18n:translate="" tal:condition="layout.cloud_type == 'aws'">AMI name</label>
                                 </div>
-                                <div class="small-8 columns value">${image.name if image.name else ''}</div>
+                                <div class="small-8 columns value breakword">${image.name if image.name else ''}</div>
                             </div>
                             <div tal:condition="not is_owned_by_user">
                                 <div class="row controls-wrapper readonly">
@@ -145,10 +141,10 @@
                                 <div class="small-12 columns value">
                                     <div id="sharing-radio-buttons">
                                          <span class="padded-element"> 
-                                            <input type="radio" name="sharing" value="true" ng-model="isPublic"> Public
+                                            <input type="radio" name="sharing" value="true" ng-model="isPublic" /> Public
                                         </span>
                                         <span class="padded-element"> 
-                                            <input type="radio" class="padded-element" name="sharing" value="false" ng-model="isPublic"> Private
+                                            <input type="radio" class="padded-element" name="sharing" value="false" ng-model="isPublic" /> Private
                                         </span>
                                     </div>
                                     <div class="bottom-padding" ng-show="isPublic">
@@ -176,7 +172,7 @@
                                                 {{ account }}
                                             </span>
                                             <a ng-click="removeAccount(account)"><i class="fi-x"></i></a>
-                                            <input type="hidden" name="launch-permissions-inputbox" ng-value="account">
+                                            <input type="hidden" name="launch-permissions-inputbox" ng-value="account" />
                                         </span>
                                     </div>
                                     <div class="subsection-label top-bottom-padding">
@@ -231,6 +227,7 @@
 
 <div metal:fill-slot="tail_js">
     <script src="${request.static_path('eucaconsole:static/js/thirdparty/jquery/chosen.jquery.min.js')}"></script>
+    <script src="${request.static_path('eucaconsole:static/js/pages/eucaconsole_utils.js')}"></script>
     <script src="${request.static_path('eucaconsole:static/js/pages/image.js')}"></script>
 </div>
 

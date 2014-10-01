@@ -27,7 +27,6 @@
 Tests for login forms
 
 """
-import socket
 from urllib2 import HTTPError, URLError
 
 import boto
@@ -76,7 +75,7 @@ class EucaAuthTestCase(BaseTestCase):
 
     def test_euca_authentication_failure(self):
         kwargs = dict(account=self.account, user=self.username, passwd=self.password, duration=self.duration)
-        self.assertRaises(socket.gaierror, self.auth.authenticate, **kwargs)
+        self.assertRaises(URLError, self.auth.authenticate, **kwargs)
 
 
 class AWSAuthTestCase(BaseTestCase):
@@ -99,7 +98,7 @@ class AWSAuthTestCase(BaseTestCase):
     def test_aws_authentication_failure(self):
         import logging; logging.info("url = "+self.expected_url)
         try:
-            self.auth.authenticate(timeout=10)
+            self.auth.authenticate(timeout=1)
             self.assertFalse(True, msg="Auth should have thrown an exception")
         except (HTTPError, URLError):
             self.assertTrue(True, msg="Auth threw an exception, to be expected")
