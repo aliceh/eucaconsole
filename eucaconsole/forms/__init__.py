@@ -34,9 +34,10 @@ import logging
 import pylibmc
 import sys
 
-from beaker.cache import cache_region
 from wtforms import StringField
 from wtforms.ext.csrf import SecureForm
+from wtforms.widgets import html_params, HTMLString, Select
+from markupsafe import escape
 
 import boto
 from boto.exception import BotoServerError
@@ -49,13 +50,23 @@ from ..i18n import _
 BLANK_CHOICE = ('', _(u'Select...'))
 
 
+class NgNonBindableOptionSelect(Select):
+    @classmethod
+    def render_option(cls, value, label, selected, **kwargs):
+        options = {'value': value}
+        if selected:
+            options['selected'] = u'selected'
+        return HTMLString(u'<option %s ng-non-bindable="">%s</option>' % (
+            html_params(**options), escape(unicode(label))))
+
+
 class BaseSecureForm(SecureForm):
     def __init__(self, request, **kwargs):
         self.request = request
         super(BaseSecureForm, self).__init__(**kwargs)
 
     def generate_csrf_token(self, csrf_context):
-        return self.request.session.get_csrf_token()
+        return self.request.session.get_csrf_token() if hasattr(self.request, 'session') else ''
 
     def get_errors_list(self):
         """Convenience method to get all form validation errors as a list of message strings"""
@@ -175,6 +186,19 @@ class ChoicesManager(object):
             volumes = self.conn.get_all_volumes()
             if self.conn:
                 for volume in volumes:
+                    value = volume.id
+                    label = TaggedItemView.get_display_name(volume, escapebraces=escapebraces)
+                    choices.append((value, label))
+        return choices
+
+    def snapshots(self, snapshots=None, escapebraces=True):
+        from ..views import TaggedItemView
+        choices = [('', _(u'None'))]
+        snapshots = snapshots or []
+        if not snapshots and self.conn is not None:
+            snapshots = self.conn.get_all_snapshots()
+            if self.conn:
+                for volume in snapshots:
                     value = volume.id
                     label = TaggedItemView.get_display_name(volume, escapebraces=escapebraces)
                     choices.append((value, label))
@@ -324,11 +348,9 @@ class ChoicesManager(object):
     def get_all_load_balancers(self, load_balancer_names=None):
         params = {}
         if load_balancer_names:
-            self.build_list_params(params, load_balancer_names,
-                                   'LoadBalancerNames.member.%d')
-        http_request = self.conn.build_base_http_request('GET', '/', None,
-                                                         params, {}, '',
-                                                         self.conn.server_name())
+            self.conn.build_list_params(params, load_balancer_names, 'LoadBalancerNames.member.%d')
+        http_request = self.conn.build_base_http_request(
+            'GET', '/', None, params, {}, '', self.conn.server_name())
         http_request.params['Action'] = 'DescribeLoadBalancers'
         http_request.params['Version'] = self.conn.APIVersion
         response = self.conn._mexe(http_request, override_num_retries=2)
@@ -409,13 +431,21 @@ class ChoicesManager(object):
             choices.append((vpc.id, vpc_name))
         return sorted(set(choices))
 
-    def vpc_subnets(self, vpc_subnets=None, add_blank=True, escapebraces=True):
+    def vpc_subnets(self, vpc_subnets=None, vpc_id=None, show_zone=False, add_blank=True, escapebraces=True):
         choices = []
         if add_blank:
             choices.append(('None', _(u'No subnets found')))
         vpc_subnet_list = vpc_subnets or []
         if not vpc_subnet_list and self.conn is not None:
-            vpc_subnet_list = self.conn.get_all_subnets()
+            if vpc_id:
+                vpc_subnet_list = self.conn.get_all_subnets(filters={'vpcId': [vpc_id]})
+            else:
+                vpc_subnet_list = self.conn.get_all_subnets()
         for vpc in vpc_subnet_list:
-            choices.append((vpc.id, vpc.cidr_block))
+            if show_zone:
+                # Format the VPC subnet display string for select options
+                subnet_string = '{0} ({1}) | {2}'.format(vpc.cidr_block, vpc.id, vpc.availability_zone)
+                choices.append((vpc.id, subnet_string))
+            else:
+                choices.append((vpc.id, vpc.cidr_block))
         return sorted(set(choices))

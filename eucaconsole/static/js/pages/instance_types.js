@@ -4,7 +4,7 @@
  *
  */
 
-angular.module('InstanceTypesPage', [])
+angular.module('InstanceTypesPage', ['EucaConsoleUtils'])
     .directive('onFinishRender', function ($timeout) {
         return {
             restrict: 'A',
@@ -18,7 +18,7 @@ angular.module('InstanceTypesPage', [])
             }
         }
     })
-    .controller('InstanceTypesCtrl', function ($scope, $http, $timeout) {
+    .controller('InstanceTypesCtrl', function ($scope, $http, $timeout, eucaHandleError) {
         $http.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
         $scope.items = [];
         $scope.cpuList = [];
@@ -32,6 +32,8 @@ angular.module('InstanceTypesPage', [])
         $scope.cpuInputError = {};
         $scope.memoryInputError = {};
         $scope.diskInputError = {};
+        $scope.chosenCreateOptionText = '';
+        $scope.chosenNoResultsText = '';
         $scope.itemsLoading = true;
         $scope.isNotChanged = true;
         $scope.jsonEndpoint = '';
@@ -40,8 +42,14 @@ angular.module('InstanceTypesPage', [])
         $scope.initController = function (jsonItemsEndpoint, submitEndpoint) {
             $scope.jsonEndpoint = jsonItemsEndpoint;
             $scope.submitEndpoint = submitEndpoint;
+            $scope.initValues();
             $scope.getItems();
             $scope.setWatch();
+        };
+        $scope.initValues = function () {
+            // Init text values
+            $scope.chosenCreateOptionText = $('#chosen-create-option-text').text();
+            $scope.chosenNoResultsText = $('#chosen-no-results-text').text();
         };
         $scope.initChosenWidgets = function () {
             angular.forEach($scope.items, function(item){
@@ -130,8 +138,9 @@ angular.module('InstanceTypesPage', [])
             $(selector).chosen({
                 width: '80%', search_contains: true, 
                 persistent_create_option: true,
-                skip_no_results: true,
-                create_option_text: 'Insert a new value',
+                no_results_text: $scope.chosenNoResultsText, 
+                create_with_enter: true,
+                create_option_text: $scope.chosenCreateOptionText,
                 create_option: createOptionCallback
             });
         }; 
@@ -174,14 +183,7 @@ angular.module('InstanceTypesPage', [])
                 $scope.items = results;
                 $scope.$emit('itemsLoaded', $scope.items);
             }).error(function (oData, status) {
-                var errorMsg = oData['message'] || null;
-                if (errorMsg) {
-                    if (status === 403 || status === 400) {  // S3 token expiration responses return a 400
-                        $('#timed-out-modal').foundation('reveal', 'open');
-                    } else {
-                        Notify.failure(errorMsg);
-                    }
-                }
+                eucaHandleError(oData, status);
             });
         };
         $scope.getCPUList = function () {
@@ -309,11 +311,7 @@ angular.module('InstanceTypesPage', [])
                         Notify.success(oData.message);
                         $scope.submitCompleted();
                     }).error(function (oData, status) {
-                        var errorMsg = oData['message'] || '';
-                        if (errorMsg && status === 403) {
-                            $('#timed-out-modal').foundation('reveal', 'open');
-                        }
-                        Notify.failure(errorMsg);
+                        eucaHandleError(oData, status);
                     });
             } 
         };

@@ -4,7 +4,7 @@
  *
  */
 
-angular.module('SecurityGroupRules', [])
+angular.module('SecurityGroupRules', ['CustomFilters'])
     .controller('SecurityGroupRulesCtrl', function ($scope, $http, $timeout) {
         $http.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
         $scope.rulesEditor = $('#rules-editor');
@@ -13,12 +13,17 @@ angular.module('SecurityGroupRules', [])
         $scope.rulesArray = [];
         $scope.rulesEgressArray = [];
         $scope.jsonEndpoint='';
+        $scope.internetProtocolsJsonEndpoint = '';
         $scope.securityGroupList = [];
         $scope.securityGroupVPC = '';
         $scope.selectedProtocol = '';
+        $scope.customProtocol = '';
+        $scope.customProtocolDivClass = "";
+        $scope.internetProtocols = {};
         $scope.isRuleNotComplete = true;
         $scope.inboundButtonClass = 'active';
         $scope.outboundButtonClass = 'inactive';
+        $scope.addRuleButtonClass = "";
         $scope.trafficType = '';
         $scope.ruleType = 'inbound';
         $scope.resetValues = function () {
@@ -27,6 +32,7 @@ angular.module('SecurityGroupRules', [])
             $scope.toPort = '';
             $scope.cidrIp = '';
             $scope.selectedProtocol = '';
+            $scope.customProtocol = '';
             $scope.icmpRange = '-1';  // Default to 'All' if ICMP traffic type
             $scope.groupName = '';
             $scope.ipProtocol = 'tcp';
@@ -36,17 +42,20 @@ angular.module('SecurityGroupRules', [])
             $('#ip-protocol-select').prop('selectedIndex', -1);
             $('#ip-protocol-select').trigger('chosen:updated');
             $scope.cleanupSelections();
+            $scope.adjustIPProtocolOptions();
         };
         $scope.syncRules = function () {
             $scope.rulesTextarea.val(JSON.stringify($scope.rulesArray));
             $scope.rulesEgressTextarea.val(JSON.stringify($scope.rulesEgressArray));
             $scope.resetValues();
         };
-        $scope.initRules = function (rulesJson, rulesEgressJson, jsonEndpoint) {
+        $scope.initRules = function (rulesJson, rulesEgressJson, jsonEndpoint, internetProtocolsJsonEndpoint) {
             rulesJson = rulesJson.replace(/__apos__/g, "\'").replace(/__dquote__/g, '\\"').replace(/__bslash__/g, "\\");
             $scope.rulesArray = JSON.parse(rulesJson);
             $scope.rulesEgressArray = JSON.parse(rulesEgressJson);
-            $scope.jsonEndpoint=jsonEndpoint;
+            $scope.jsonEndpoint = jsonEndpoint;
+            $scope.internetProtocolsJsonEndpoint = internetProtocolsJsonEndpoint;
+            $scope.initInternetProtocols();
             $scope.syncRules();
             $scope.setWatchers();
         };
@@ -54,6 +63,24 @@ angular.module('SecurityGroupRules', [])
             $scope.rulesArray = [];
             $scope.rulesEgressArray = [];
             $scope.syncRules();
+        };
+        // Initialize the Internet Protocols map
+        $scope.initInternetProtocols = function () {
+            var csrf_token = $('#csrf_token').val();
+            var data = "csrf_token=" + csrf_token;
+            $http({method:'POST', url:$scope.internetProtocolsJsonEndpoint, data:data,
+                   headers: {'Content-Type': 'application/x-www-form-urlencoded'}}).
+              success(function(oData) {
+                var results = oData ? oData.results : [];
+                var options = JSON.parse(results);
+                var pArray = options['internet_protocols'];
+                // Create internet protocols number to name map
+                angular.forEach(pArray, function(protocol) {
+                    $scope.internetProtocols[protocol[0]] = protocol[1];
+                });
+                // Scan the rule arrays and convert the custom protocol numbers to the names
+                $scope.scanForCustomProtocols();
+            });
         };
         $scope.getAllSecurityGroups = function (vpc) {
             var csrf_token = $('#csrf_token').val();
@@ -82,7 +109,11 @@ angular.module('SecurityGroupRules', [])
             if( $scope.hasDuplicatedRule == true ){
                 $scope.isRuleNotComplete = true;
             }
-            if( $scope.selectedProtocol !== 'icmp' ){
+            if ($scope.selectedProtocol === 'custom') {
+                if ($scope.customProtocolDivClass === 'error' || $scope.customProtocol == '') {
+                    $scope.isRuleNotComplete = true;
+                }
+            } else if( $scope.selectedProtocol !== 'icmp' && $scope.selectedProtocol !== '-1' ){
                 if( $scope.fromPort === '' || $scope.fromPort === undefined ){
                     $scope.isRuleNotComplete = true;
                 }else if( $scope.toPort === '' || $scope.toPort === undefined ){
@@ -103,6 +134,32 @@ angular.module('SecurityGroupRules', [])
         $scope.setWatchers = function () {
             $scope.$watch('selectedProtocol', function(){ 
                 $scope.checkRequiredInput();
+                // Set the defalt CIDR IP value to be "Open to all addresses"
+                // In case of choosing "All traffic" Protocol
+                if ($scope.selectedProtocol == '-1') {
+                    $scope.cidrIp = '0.0.0.0/0';
+                } else {
+                    $scope.cidrIp = '';
+                }
+            });
+            $scope.$watch('customProtocol', function(){ 
+                if ($scope.customProtocol != '') {
+                    // error is customProtocol does not exist in the map
+                    if ($scope.verifyCustomProtocol() == false) {
+                        $scope.customProtocolDivClass = "error";
+                    } else {
+                        $scope.customProtocolDivClass = "";
+                    }
+                } else {
+                    $scope.customProtocolDivClass = "";
+                }
+                $scope.checkRequiredInput();
+            });
+            $scope.$watch('isRuleNotComplete', function () {
+                $scope.setAddRuleButtonClass(); 
+            });
+            $scope.$watch('customProtocolDivClass', function () {
+                $scope.setAddRuleButtonClass(); 
             });
             $scope.$watch('fromPort', function(){ 
                 $scope.checkRequiredInput();
@@ -132,6 +189,14 @@ angular.module('SecurityGroupRules', [])
             $scope.$watch('securityGroupVPC', function() {
                 $scope.getAllSecurityGroups($scope.securityGroupVPC);
             });
+            $scope.$watch('securityGroupList', function() {
+                if ($scope.securityGroupList.length) {
+                    $scope.checkRulesForDeletedSecurityGroups();
+                }
+            }, true);
+            $scope.$watch('hasDuplicatedRule', function () {
+                $scope.setAddRuleButtonClass(); 
+            });
             $scope.$on('updateVPC', function($event, vpc) {
                 if (vpc === undefined || $scope.securityGroupVPC == vpc) {
                     return;
@@ -150,6 +215,8 @@ angular.module('SecurityGroupRules', [])
                 if ($scope.securityGroupVPC == '') {
                     $scope.selectRuleType('inbound'); 
                 }
+                // For VPC, include the option '-1' for ALL IP Protocols
+                $scope.adjustIPProtocolOptions();
             });
             $(document).on('keyup', '#input-cidr-ip', function () {
                 $scope.$apply(function() {
@@ -170,12 +237,53 @@ angular.module('SecurityGroupRules', [])
             });
         };
         // In case of the duplicated rule, add the class 'disabled' to the submit button
-        $scope.getAddRuleButtonClass = function () {
-            if( $scope.hasDuplicatedRule == true ){
-                return 'disabled';
+        $scope.setAddRuleButtonClass = function () {
+            if( $scope.isRuleNotComplete == true || $scope.hasDuplicatedRule == true || $scope.customProtocolDivClass === 'error' ){
+                $scope.addRuleButtonClass = 'disabled';
+            } else {
+                $scope.addRuleButtonClass = '';
             }
         };
-        // Run through the existing rules with the newly create rule to ensure that the new rule does not exist already
+        // Run through the existing rules to verify that
+        // the security groups in the rules are still valid
+        $scope.checkRulesForDeletedSecurityGroups = function () {
+            var invalidRulesArray = [];
+            var invalidRulesEgressArray = [];
+            // Check the ingress rules
+            angular.forEach($scope.rulesArray, function (rule) {
+                if (rule.grants[0].group_id != null) {
+                    var exists = false;
+                    angular.forEach($scope.securityGroupList, function (sg) {
+                        if (sg.id == rule.grants[0].group_id) {
+                            exists = true;
+                        } 
+                    });
+                    if (!exists) {
+                        invalidRulesArray.push(rule); 
+                    }
+                }
+            });
+            // Check the egress rules
+            angular.forEach($scope.rulesEgressArray, function (rule) {
+                if (rule.grants[0].group_id != null) {
+                    var exists = false;
+                    angular.forEach($scope.securityGroupList, function (sg) {
+                        if (sg.id == rule.grants[0].group_id) {
+                            exists = true;
+                        } 
+                    });
+                    if (!exists) {
+                        invalidRulesEgressArray.push(rule); 
+                    }
+                }
+            });
+            // Emit the signal to trigger invalid rules warning
+            if (invalidRulesArray.length > 0 || invalidRulesEgressArray.length > 0) {
+                $scope.$emit('invalidRulesWarning', invalidRulesArray, invalidRulesEgressArray);
+            }
+        };
+        // Run through the existing rules with the newly create rule
+        // to ensure that the new rule does not exist already
         $scope.checkForDuplicatedRules = function () {
             $scope.hasDuplicatedRule = false;
             // Create a new array block based on the current user input on the panel
@@ -248,6 +356,21 @@ angular.module('SecurityGroupRules', [])
                 $scope.ipProtocol = 'icmp'
             } else if ($scope.selectedProtocol === 'udp') {
                 $scope.ipProtocol = 'udp'
+            } else if ($scope.selectedProtocol === '-1') {
+                $scope.ipProtocol = '-1'
+                $scope.fromPort = null;
+                $scope.toPort = null;
+            } else if ($scope.selectedProtocol === 'custom') {
+                if (isNaN($scope.customProtocol)) {
+                    // if customProtocol is not a number, get the protocol number for ipProtocol
+                    $scope.ipProtocol = $scope.getCustomProtocolNumber($scope.customProtocol);
+                } else {
+                    $scope.ipProtocol = $scope.customProtocol; 
+                }
+                $scope.fromPort = null;
+                $scope.toPort = null;
+            } else {
+                $scope.ipProtocol = 'tcp'
             }
         };
         // Create an array block that represents a new security group rule submiitted by user
@@ -263,11 +386,14 @@ angular.module('SecurityGroupRules', [])
                 }
                 group_id=$scope.getGroupIdByName(name);
             }
+            // Adjust ipProtocol based on selectedProtocol 
+            $scope.adjustIpProtocol();
             return {
                 'from_port': $scope.fromPort,
                 'to_port': $scope.toPort,
                 // Warning: Ugly hack to properly set ip_protocol when 'udp' or 'icmp'
                 'ip_protocol': $scope.ipProtocol,
+                'custom_protocol': $scope.getCustomProtocolName($scope.customProtocol),
                 'grants': [{
                     'cidr_ip': $scope.cidrIp ? $scope.trafficType == 'ip' && $scope.cidrIp : null,
                     'group_id': group_id,
@@ -280,7 +406,10 @@ angular.module('SecurityGroupRules', [])
         };
         $scope.addRule = function ($event) {
             $event.preventDefault();
-            if( $scope.hasDuplicatedRule == true || $scope.hasInvalidOwner == true ){
+            $scope.checkRequiredInput();
+            if ($scope.isRuleNotComplete == true ||
+                $scope.hasDuplicatedRule == true ||
+                $scope.hasInvalidOwner == true) {
                 return false;
             }
             // Trigger form validation to prevent borked rule entry
@@ -289,8 +418,6 @@ angular.module('SecurityGroupRules', [])
             if (form.find('[data-invalid]').length) {
                 return false;
             }
-
-            $scope.adjustIpProtocol();
             // Add the rule
             if ($scope.ruleType == 'inbound') {
                 $scope.rulesArray.push($scope.createRuleArrayBlock());
@@ -335,7 +462,7 @@ angular.module('SecurityGroupRules', [])
                         });
                     });
                 },
-                create_option_text: 'Add Group',
+                create_option_text: 'Add Group'
             });
             $('#groupname-select').prop('selectedIndex', -1);
             $('#groupname-select').trigger('chosen:updated');
@@ -361,8 +488,9 @@ angular.module('SecurityGroupRules', [])
         $scope.addDefaultOutboundRule = function () {
             var storeRuleType = $scope.ruleType; // Save the current ruleType value
             $scope.ruleType = 'outbound';   // Needs to set 'outbound' for the rule comparison
+            $scope.selectedProtocol = "-1"; 
             $scope.ipProtocol = "-1";
-            $scope.trafficType == "ip" 
+            $scope.trafficType = "ip";
             $scope.cidrIp = "0.0.0.0/0";
             $scope.fromPort = null;
             $scope.toPort = null;
@@ -384,6 +512,98 @@ angular.module('SecurityGroupRules', [])
                 $scope.inboundButtonClass = 'inactive';
                 $scope.outboundButtonClass = 'active';
             }
+        };
+        $scope.adjustIPProtocolOptions = function () {
+            $scope.removeAllTrafficRuleOption();
+            $scope.removeCustomProtocolRuleOption();
+            if ($scope.securityGroupVPC != '') {
+                // Allow All Traffic and Custom Protocol options to be selectable for VPC
+                $scope.insertAllTrafficRuleOption();
+                $scope.insertCustomProtocolRuleOption(); 
+            }
+            $('#ip-protocol-select').prop('selectedIndex', -1);
+            $('#ip-protocol-select').trigger('chosen:updated');
+        };
+        // Remove All Traffic rule, "-1 ()" from the option
+        $scope.removeAllTrafficRuleOption  = function () {
+            $('#ip-protocol-select').find("option[value='-1']").remove();
+        };
+        // Remove Custom Protocol rule, "custom" from the option
+        $scope.removeCustomProtocolRuleOption  = function () {
+            $('#ip-protocol-select').find("option[value='custom']").remove();
+        };
+        // Allow All Traffic, "-1", to be selectable for VPC
+        $scope.insertAllTrafficRuleOption  = function () {
+            var key = "-1";
+            var value = $('#all-traffic-option-text').text();
+            $('#ip-protocol-select').prepend($("<option></option>").attr("value", key).text(value));  
+        };
+        // Allow Custom protocol, "custom", to be selectable for VPC
+        $scope.insertCustomProtocolRuleOption  = function () {
+            var key = "custom";
+            var value = $('#custom-protocol-option-text').text();
+            $('#ip-protocol-select').append($("<option></option>").attr("value", key).text(value));  
+        };
+        // Return the custom protocol number if exists
+        $scope.getCustomProtocolNumber = function (protocol) {
+            var protocolNumber = '';
+            angular.forEach($scope.internetProtocols, function(p, n) {
+                if (p.toUpperCase() === protocol.toUpperCase()) {
+                    protocolNumber = n;
+                }
+            });
+            return protocolNumber;
+        };
+        // Return the custom protocol name if 'protocol' is a number 
+        $scope.getCustomProtocolName = function (protocol) {
+            var customProtocolName = protocol;
+            if (!isNaN(protocol)) {
+                customProtocolName = $scope.internetProtocols[protocol];
+            }
+             return customProtocolName;
+        };
+        // Return true if the protocol a custom protocol
+        $scope.isCustomProtocol = function (ipProtocol) {
+            if (!isNaN(ipProtocol) && ipProtocol !== '-1') {
+                return true;
+            }
+            return false;
+        };
+        $scope.verifyCustomProtocol = function () {
+            if (isNaN($scope.customProtocol)) {
+                // if customProtocol is not a number
+                if ($scope.getCustomProtocolNumber($scope.customProtocol) != '') {
+                    return true;
+                } else {
+                    return false;
+                }
+            } else {
+                // if customProtocol is a number
+                if ($scope.getCustomProtocolName($scope.customProtocol) != undefined) {
+                    return true;
+                } else {
+                    return false;
+                }
+            }
+        };
+        // Scane the rule arrays and convert the custom protocol numbers to the names
+        $scope.scanForCustomProtocols = function () {
+            angular.forEach($scope.rulesArray, function(rule) {
+                if ($scope.isCustomProtocol(rule.ip_protocol)) {
+                    var customProtocol = $scope.internetProtocols[rule.ip_protocol];
+                    if (customProtocol) { 
+                        rule.custom_protocol = customProtocol;
+                    }
+                }
+            });
+            angular.forEach($scope.rulesEgressArray, function(rule) {
+                if ($scope.isCustomProtocol(rule.ip_protocol)) {
+                    var customProtocol = $scope.internetProtocols[rule.ip_protocol];
+                    if (customProtocol) { 
+                        rule.custom_protocol = customProtocol;
+                    }
+                }
+            });
         };
     })
 ;

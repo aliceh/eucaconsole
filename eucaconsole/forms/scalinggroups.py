@@ -31,20 +31,9 @@ Forms for Scaling Group
 import wtforms
 
 from wtforms import validators
-from wtforms.widgets import html_params, HTMLString, Select
-from markupsafe import escape
 
 from ..i18n import _
-from . import BaseSecureForm, ChoicesManager, TextEscapedField
-
-
-class NgNonBindableOptionSelect(Select):
-    @classmethod
-    def render_option(cls, value, label, selected):
-        options = {'value': value}
-        if selected:
-            options['selected'] = u'selected'
-        return HTMLString(u'<option %s ng-non-bindable="">%s</option>' % (html_params(**options), escape(unicode(label))))
+from . import BaseSecureForm, ChoicesManager, TextEscapedField, NgNonBindableOptionSelect
 
 
 class BaseScalingGroupForm(BaseSecureForm):
@@ -135,7 +124,7 @@ class BaseScalingGroupForm(BaseSecureForm):
         self.elb_choices_manager = ChoicesManager(conn=elb_conn) if elb_conn else None
         self.launch_config.choices = self.get_launch_config_choices()
         self.vpc_network.choices = self.vpc_choices_manager.vpc_networks()
-        self.vpc_subnet.choices = self.vpc_choices_manager.vpc_subnets(add_blank=True)
+        self.vpc_subnet.choices = self.get_vpc_subnet_choices()
         self.health_check_type.choices = self.get_healthcheck_type_choices()
         region = request.session.get('region')
         self.availability_zones.choices = self.get_availability_zone_choices(region)
@@ -198,6 +187,21 @@ class BaseScalingGroupForm(BaseSecureForm):
             for load_balancer_name in self.scaling_group.load_balancers:
                 choices.append((load_balancer_name, load_balancer_name))
         return sorted(set(choices))
+
+    def get_vpc_subnet_choices(self):
+        choices = []
+        if self.scaling_group is not None and self.scaling_group.vpc_zone_identifier:
+            # return VPC specific subnets only
+            vpc_subnets = self.scaling_group.vpc_zone_identifier.split(',')
+            vpc_subnet = self.vpc_conn.get_all_subnets(subnet_ids=vpc_subnets[0])
+            vpc_id = None
+            if vpc_subnet:
+                vpc_id = vpc_subnet[0].vpc_id
+            choices = self.vpc_choices_manager.vpc_subnets(vpc_id=vpc_id, show_zone=True, add_blank=True)
+        else:
+            # return all VPC subnets
+            choices = self.vpc_choices_manager.vpc_subnets(show_zone=True, add_blank=True)
+        return choices
 
     @staticmethod
     def get_healthcheck_type_choices():

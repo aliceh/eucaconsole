@@ -59,15 +59,20 @@
     </div>
     <div id="delete-bucket-modal" class="reveal-modal small" data-reveal="">
         <h3 i18n:translate="">Delete bucket</h3>
-        <p ng-show="bucketCount == 0">
+        <p ng-show="bucketCount == 0 &amp;&amp; versionCount == 0">
             <span i18n:translate="">Are you sure you want to delete bucket</span>&nbsp;{{ bucketName }}?
         </p>
         <p ng-show="bucketCount > 0">
             <span i18n:translate="">You cannot delete a bucket unless it is empty. Please delete all the files and folders this bucket contains and retry this operation.</span>
         </p>
+        <p ng-show="versionCount > 0 &amp;&amp; bucketCount == 0">
+            <span i18n:translate="">This bucket appears empty, but there are {{ versionCount }} older versions of objects still present.</span>
+            <br>&nbsp;</br>
+            <span i18n:translate="">The Management Console does not support bucket versioning management in this release. You will need to use whichever tool was used to enable versioning on this bucket to delete all versions of all objects it contains. Then the bucket can be delted.</span>
+        </p>
         <form id='delete-bucket-form' action="${request.route_path('bucket_delete', name=bucket.name if bucket else '_name_')}" method="post">
             ${structure:delete_form['csrf_token']}
-            <div class="dialog-submit-button" ng-show="bucketCount == 0">
+            <div class="dialog-submit-button" ng-show="bucketCount == 0 &amp;&amp; versionCount == 0">
                 <button type="submit" id="delete_bucket_submit_button" class="button expand">
                     <span i18n:translate="">Yes, Delete Bucket</span>
                 </button>
@@ -77,5 +82,18 @@
             </div>
         </form>
         <a href="#" id="delete_bucket_close_link" class="close-reveal-modal">&#215;</a>
+    </div>
+    <div id="copy-folder-modal" class="reveal-modal small" data-reveal="">
+        <h3 i18n:translate="">Paste folder</h3>
+        <p i18n:translate="">Pasting a folder and its contents can take some time. Leaving this page while the paste is in progress will cancel the operation.
+        </p>
+        <div class="bucket-progress">
+            <span class="meter" style="width: {{ (progress/total)*100 }}%"></span>
+            <span class="status">Pasted {{ progress }} of {{ total }}</span>
+        </div>
+        <a class="button expand cancel" id="cancel-copy-btn" i18n:translate="" ng-click="cancelCopying()">
+            Cancel Remaining Pastes
+        </a>
+        <a href="#" id="copy_folder_close_link" class="close-reveal-modal">&#215;</a>
     </div>
  </div>

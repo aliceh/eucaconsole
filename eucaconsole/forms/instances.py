@@ -299,13 +299,14 @@ class AttachVolumeForm(BaseSecureForm):
 
     def set_volume_choices(self):
         """Populate volume field with volumes available to attach"""
+        from ..views import BaseView
         choices = [('', _(u'select...'))]
         for volume in self.volumes:
             if self.instance and volume.zone == self.instance.placement and volume.attach_data.status is None:
                 name_tag = volume.tags.get('Name')
                 extra = ' ({name})'.format(name=name_tag) if name_tag else ''
                 vol_name = '{id}{extra}'.format(id=volume.id, extra=extra)
-                choices.append((volume.id, vol_name))
+                choices.append((volume.id, BaseView.escape_braces(vol_name)))
         if len(choices) == 1:
             choices = [('', _(u'No available volumes in this availability zone'))]
         self.volume_id.choices = choices
@@ -419,11 +420,11 @@ class InstanceTypeForm(BaseSecureForm):
 class InstanceCreateImageForm(BaseSecureForm):
     """CSRF-protected form to create an image from an instance"""
     name_error_msg = _(
-        u'Name must be 3-128 alphanumeric characters (and may include parens, period (.), '
-        u'slashes (/), dashes (-) or underscores (_) but not spaces')
+        u"Name must be between 3 and 128 characters long, and may contain letters, numbers, "
+        u"'(', ')', '.', '-', '/' and '_', and cannot contain spaces.")
     name = wtforms.TextField(
         label=_(u'Name'),
-        validators=[validators.Required(message=name_error_msg)],
+        validators=[validators.InputRequired(message=name_error_msg)],
     )
     desc_error_msg = _(u'Description must be less than 255 characters')
     description = wtforms.TextAreaField(
@@ -449,8 +450,8 @@ class InstanceCreateImageForm(BaseSecureForm):
         no_reboot_helptext = _(
             u'When checked, the instance will not be shut down before the image is created. '
             u'May impact file integrity of the image.')
-        self.no_reboot.help_text = no_reboot_helptext
+        self.no_reboot.label_help_text = no_reboot_helptext
         s3_bucket_helptext = _(u'Choose from your existing buckets, or enter a name to create a new bucket')
-        self.s3_bucket.help_text = s3_bucket_helptext
+        self.s3_bucket.label_help_text = s3_bucket_helptext
         s3_prefix_helptext = _(u'The beginning of your image file name')
-        self.s3_prefix.help_text = s3_prefix_helptext
+        self.s3_prefix.label_help_text = s3_prefix_helptext

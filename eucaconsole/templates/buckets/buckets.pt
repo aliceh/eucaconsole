@@ -60,6 +60,7 @@
                     <li>
                         <a i18n:translate="" ng-href="{{ item.details_url }}">View details</a>
                     </li>
+                    <!--!
                     <li ng-show="!versioningStatusLoading[item.bucket_name]">
                         <a ng-click="revealVersioningModal(bucketVersioningAction[item.bucket_name], item)"
                            class="update-versioning-action">
@@ -71,8 +72,12 @@
                             </span>
                         </a>
                     </li>
+                    -->
                     <li ng-show="hasCopyItem()">
                         <a i18n:translate="" ng-click="doPaste(item)">Paste object</a>
+                    </li>
+                    <li ng-show="hasCopyFolder(item)">
+                        <a i18n:translate="" ng-click="doPaste(item)">Paste folder</a>
                     </li>
                     <li>
                         <a i18n:translate="" ng-click="revealModal('delete-bucket', item)">Delete</a>
@@ -113,6 +118,7 @@
                             <li>
                                 <a i18n:translate="" ng-href="{{ item.details_url }}">View details</a>
                             </li>
+                            <!--!
                             <li ng-show="!versioningStatusLoading[item.bucket_name]">
                                 <a ng-click="revealVersioningModal(bucketVersioningAction[item.bucket_name], item)"
                                    class="update-versioning-action">
@@ -124,8 +130,12 @@
                                     </span>
                                 </a>
                             </li>
+                            -->
                             <li ng-show="hasCopyItem()">
                                 <a i18n:translate="" ng-click="doPaste(item)">Paste object</a>
+                            </li>
+                            <li ng-show="hasCopyFolder(item)">
+                                <a i18n:translate="" ng-click="doPaste(item)">Paste folder</a>
                             </li>
                             <li>
                                 <a i18n:translate="" ng-click="revealModal('delete-bucket', item)">Delete</a>
@@ -144,7 +154,6 @@
 <div metal:fill-slot="tail_js">
     <script src="${request.static_path('eucaconsole:static/js/pages/custom_filters.js')}"></script>
     <script src="${request.static_path('eucaconsole:static/js/pages/landingpage.js')}"></script>
-    <script src="${request.static_path('eucaconsole:static/js/pages/eucaconsole_utils.js')}"></script>
     <script src="${request.static_path('eucaconsole:static/js/pages/buckets.js')}"></script>
 </div>
 

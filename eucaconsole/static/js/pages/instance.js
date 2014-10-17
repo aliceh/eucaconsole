@@ -5,7 +5,7 @@
  */
 
 angular.module('InstancePage', ['TagEditor', 'EucaConsoleUtils'])
-    .controller('InstancePageCtrl', function ($scope, $http, $timeout, eucaUnescapeJson) {
+    .controller('InstancePageCtrl', function ($scope, $http, $timeout, eucaUnescapeJson, eucaHandleError) {
         $http.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
         $scope.instanceStateEndpoint = '';
         $scope.instanceUserDataEndpoint = '';
@@ -69,10 +69,7 @@ angular.module('InstancePage', ['TagEditor', 'EucaConsoleUtils'])
                     modal.foundation('reveal', 'open');
                 }
             }).error(function (oData, status) {
-                var errorMsg = oData['message'] || null;
-                if (errorMsg && status === 403) {
-                    $('#timed-out-modal').foundation('reveal', 'open');
-                }
+                eucaHandleError(oData, status);
             });
         };
         $scope.setFocus = function () {
@@ -220,12 +217,11 @@ angular.module('InstancePage', ['TagEditor', 'EucaConsoleUtils'])
         $scope.getUserData = function () {
             $http.get($scope.instanceUserDataEndpoint).success(function(oData) {
                 var userData = oData ? oData.results : '';
-                if (userData.type.indexOf('text') === 0) {
+                if (userData.type.indexOf('text') === 0 || userData.type === 'empty') {
                     $scope.isFileUserData = false;
                     $("#userdata:not([display='none'])").val(userData.data);
                     $timeout(function() { $scope.inputtype = 'text'; });
-                }
-                else {
+                } else {
                     $scope.isFileUserData = true;
                     $("#userdatatype:not([display='none'])").text(userData.type);
                     $timeout(function() { $scope.inputtype = 'file'; });

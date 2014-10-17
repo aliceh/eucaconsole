@@ -28,13 +28,19 @@ angular.module('Dashboard', ['EucaConsoleUtils'])
             $scope.setFocus();
             $scope.getItemCounts();
             $scope.storeAWSRegion();
+            $scope.health = options['services'];
             $scope.getServiceStatus();
             $('#sortable').sortable({
                 stop: function(event, ui) {
-                    $.cookie($scope.accountName + "_dash_order", $('#sortable').sortable('toArray'), {expires: 180});
+                    // TODO: remove 'add-tile' from list first
+                    var order = $('#sortable').sortable('toArray');
+                    order.splice(order.indexOf('add-tile'), 1);
+                    $.cookie($scope.accountName + "_dash_order", order, {expires: 180});
                 }
             });
             $('#sortable').disableSelection();
+            $('#new-tile').chosen({'width': '100%', search_contains: true});
+            $('#add-tile-btn').on('click', $scope.addTile);
         };
         $scope.setFocus = function() {
             $('#zone-selector').find('a').get(0).focus();
@@ -48,35 +54,38 @@ angular.module('Dashboard', ['EucaConsoleUtils'])
                 var results = oData ? oData : {};
                 $scope.itemsLoading = false;
                 $scope.totals = results;
-                if ($scope.health.length > 0) {
-                    $scope.health = results.health.concat($scope.health);
-                }
-                else {
-                    $scope.health = results.health;
-                }
+                $scope.setServiceStatus(results.health.name, results.health.status);
             }).error(function (oData, status) {
                 var errorMsg = oData['message'] || null;
                 if (errorMsg && status === 403) {
                     $('#timed-out-modal').foundation('reveal', 'open');
                 }
+                
             });
         };
         $scope.getServiceStatus = function() {
-            $http.get($scope.statusEndpoint).success(function(oData) {
-                var results = oData ? oData : {};
-                if ($scope.health.length > 0) {
-                    $scope.health = $scope.health.concat(results.health);
-                }
-                else {
-                    $scope.health = results.health;
-                }
-            }).error(function (oData, status) {
-                var errorMsg = oData['message'] || null;
-                if (errorMsg && status === 403) {
-                    $('#timed-out-modal').foundation('reveal', 'open');
+            angular.forEach($scope.health, function(value, key) {
+                if (key == 0) return;  // skip first, it's compute and that's fetch elsewhere
+                var url = $scope.statusEndpoint+"?svc="+value.name.replace('&', '%26');
+                $http.get(url).success(function(oData) {
+                    var results = oData ? oData : {};
+                    $scope.setServiceStatus(results.health.name, results.health.status);
+                }).error(function (oData, status) {
+                    var errorMsg = oData['message'] || null;
+                    if (errorMsg && status === 403) {
+                        $('#timed-out-modal').foundation('reveal', 'open');
+                    }
+                    
+                });
+            })
+        };
+        $scope.setServiceStatus = function(name, status) {
+            angular.forEach($scope.health, function(value, key) {
+                if (name == value.name) {
+                    value.status = status;
                 }
             });
-        };
+        }
         $scope.setZone = function (zone) {
             $scope.itemsLoading = true;
             $scope.selectedZone = zone;
@@ -90,6 +99,23 @@ angular.module('Dashboard', ['EucaConsoleUtils'])
                 localStorage.removeItem($scope.storedZoneKey);
                 $scope.selectedZone = '';
             }
+        };
+        $scope.addTile = function() {
+            var tile = $('#new-tile').val();
+            var order = $('#sortable').sortable('toArray');
+            order.push(tile);
+            $.cookie($scope.accountName + "_dash_order", order, {expires: 180});
+            window.location.reload();
+        };
+        $scope.removeTile = function(tile) {
+            var order = $('#sortable').sortable('toArray');
+            var add_idx = order.indexOf('add-tile');
+            if (add_idx > -1) {
+                order.splice(add_idx, 1);
+            }
+            order.splice(order.indexOf(tile), 1);
+            $.cookie($scope.accountName + "_dash_order", order, {expires: 180});
+            window.location.reload();
         };
     })
 ;

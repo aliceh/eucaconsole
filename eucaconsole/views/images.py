@@ -89,9 +89,6 @@ class ImageBundlingMixin(BlockDeviceMappingItemView):
                 tags = json.loads(metadata['tags'])
                 self.conn.create_tags(image_id, tags)
                 self.invalidate_images_cache()
-            # cleanup creds
-            iam_conn = self.get_connection(conn_type='iam')
-            iam_conn.delete_access_key(metadata['access'])
             # cleanup metadata
             k.delete()
             self.conn.delete_tags(instance.id, ['ec_bundling'])
@@ -101,10 +98,7 @@ class ImageBundlingMixin(BlockDeviceMappingItemView):
                 return self.conn.get_all_images(image_ids=[image_id])[0]
         elif tasks[0].state == 'failed':
             # generate error message, need to let user know somehow
-            logging.warn("bundle task failed! " + tasks[0].message)
-            # cleanup creds
-            iam_conn = self.get_connection(conn_type='iam')
-            iam_conn.delete_access_key(metadata['access'])
+            logging.warn("bundle task failed! ")
             # cleanup metadata
             k.delete()
             self.conn.delete_tags(instance.id, ['ec_bundling'])
@@ -113,6 +107,7 @@ class ImageBundlingMixin(BlockDeviceMappingItemView):
             # add this into image list
             fakeimage = Image()
             fakeimage.id = _(u'Pending')
+            fakeimage.fake_id = 'p'+instance.id
             fakeimage.location = "%s/%s.manifest.xml" % (bucket, metadata['prefix'])
             fakeimage.owner_id = ''  # do we need this?
             fakeimage.state = tasks[0].state
@@ -139,9 +134,6 @@ class ImageBundlingMixin(BlockDeviceMappingItemView):
         s3_conn = self.get_connection(conn_type='s3')
         k = Key(s3_conn.get_bucket(bucket))
         k.key = bundle_id
-        metadata = json.loads(k.get_contents_as_string())
-        iam_conn = self.get_connection(conn_type='iam')
-        iam_conn.delete_access_key(metadata['access'])
         # cleanup metadata
         k.delete()
         self.conn.delete_tags(instance.id, ['ec_bundling'])
@@ -224,7 +216,6 @@ class ImagesJsonView(LandingPageView, ImageBundlingMixin):
         for instance in instances:
             image = self.handle_instance_being_bundled(instance)
             if image is not None:
-                image.fake_id = 'p'+instance.id
                 items.append(image)
         # Apply filters, skipping owner_alias since it's leveraged in self.get_items() below
         filtered_items = self.filter_items(items, ignore=['owner_alias', 'platform'])
@@ -300,9 +291,19 @@ class ImagesJsonView(LandingPageView, ImageBundlingMixin):
             url = None
             if image_id.find('pi-') == 0:
                 instances = self.conn.get_only_instances([image_id[1:]])
+                if len(instances) < 1:  # let's return failed since that's true
+                    return dict(
+                        results=dict(image_status='failed', progress=0, url=url)
+                    )
                 image = self.handle_instance_being_bundled(instances[0])
-                if image.state == 'available':
-                    url = self.request.route_path('image_view', id=image.id)
+                if image:
+                    if image.state == 'available':
+                        url = self.request.route_path('image_view', id=image.id)
+                else:
+                    msg = _(u'Bundle instance failed for ')+instances[0].id
+                    self.request.session.flash(msg, queue=Notification.ERROR)
+                    url = self.request.route_path('images')
+                    return dict(results=dict(image_status='failed', progress=0, url=url))
             else:
                 image = self.conn.get_image(image_id)
             """Return current image status"""
@@ -374,13 +375,13 @@ class ImageView(TaggedItemView, ImageBundlingMixin):
     def check_if_image_owned_by_user(self):
         if self.image and self.image.owner_id == self.account_id:
             return True
-        return False 
+        return False
 
     def get_image_launch_permissions_array(self):
-        if self.is_owned_by_user is False: 
-            return [] 
+        if self.is_owned_by_user is False:
+            return []
         launch_permissions = self.image.get_launch_permissions()
-        if launch_permissions is None or not 'user_ids' in launch_permissions:
+        if launch_permissions is None or 'user_ids' not in launch_permissions:
             return []
         lp_array = [lp.encode('ascii', 'ignore') for lp in launch_permissions['user_ids']]
         return lp_array
@@ -393,7 +394,10 @@ class ImageView(TaggedItemView, ImageBundlingMixin):
             with boto_error_handler(self.request):
                 if image_param.find('pi-') == 0:
                     instances = self.conn.get_only_instances([image_param[1:]])
-                    images = [self.handle_instance_being_bundled(instances[0], do_not_finish=True)]
+                    if len(instances) < 1:
+                        images = None
+                    else:
+                        images = [self.handle_instance_being_bundled(instances[0], do_not_finish=True)]
                 else:
                     images = self.conn.get_all_images(image_ids=images_param)
         image = images[0] if images else None
@@ -425,13 +429,13 @@ class ImageView(TaggedItemView, ImageBundlingMixin):
         if self.image is None:
             raise HTTPNotFound()
         return self.render_dict
- 
+
     @view_config(route_name='image_update', request_method='POST', renderer=TEMPLATE)
     def image_update(self):
         if self.image_form.validate():
             self.update_tags()
 
-            if self.image and self.is_owned_by_user is True: 
+            if self.image and self.is_owned_by_user is True:
                 # Update the Image Description
                 description = self.request.params.get('description', '')
                 if self.image.description != description:
@@ -445,7 +449,6 @@ class ImageView(TaggedItemView, ImageBundlingMixin):
                 is_public = self.request.params.get('sharing')
                 current_is_public = str(self.image.is_public).lower()
                 if is_public != current_is_public:
-                    lp_params = {}
                     if is_public == "true":
                         lp_params = {'ImageId': self.image.id, 'LaunchPermission.Add.1.Group': 'all'}
                     else:
@@ -471,7 +474,7 @@ class ImageView(TaggedItemView, ImageBundlingMixin):
 
         self.image_add_new_launch_permissions(new_launch_permissions)
         self.image_remove_deleted_launch_permissions(new_launch_permissions)
-        return 
+        return
 
     def image_add_new_launch_permissions(self, new_launch_permissions):
         success_msg = ''
@@ -576,11 +579,12 @@ class ImageView(TaggedItemView, ImageBundlingMixin):
     def get_controller_options_json(self):
         if not self.image:
             return '{}'
+        image_id = self.image.fake_id if hasattr(self.image, 'fake_id') else self.image.id
         return BaseView.escape_json(json.dumps({
             'is_public': self.is_public,
             'image_launch_permissions': self.image_launch_permissions,
-            'image_state_json_url': self.request.route_path('image_state_json', id=self.image.id),
-            'image_cancel_url': self.request.route_path('image_cancel', id=self.image.id),
+            'image_state_json_url': self.request.route_path('image_state_json', id=image_id),
+            'image_cancel_url': self.request.route_path('image_cancel', id=image_id),
             'images_url': self.request.route_path('images'),
         }))
 
